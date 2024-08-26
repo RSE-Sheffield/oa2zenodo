@@ -24,7 +24,7 @@ REQUIRED_OA_KEYS = {'api_key', 'event_id'}
 if not REQUIRED_OA_KEYS.issubset(conf['OXFORD_ABSTRACTS'].keys():
     print("Config 'OXFORD_ABSTRACTS' section requires keys: %s"%(REQUIRED_OA_KEYS))
     sys.exit()
-REQUIRED_Z_KEYS = {'api_key', 'community_identifiers', 'conference_title', 'conference_acronym', 'conference_dates', 'conference_place', 'conference_url'}
+REQUIRED_Z_KEYS = {'api_key', 'use_sandbox', 'keywords', 'community_identifiers', 'conference_title', 'conference_acronym', 'conference_dates', 'conference_place', 'conference_url'}
 if not REQUIRED_Z_KEYS.issubset(conf['ZENODO'].keys():
     print("Config 'ZENODO' section requires keys: %s"%(REQUIRED_Z_KEYS))
     sys.exit()
@@ -93,24 +93,33 @@ class Author:
   orcid=None
   institutions=[]
   
+ZENODO_API = "https://sandbox.zenodo.org/" if conf.getboolean('ZENODO', 'use_sandbox') else "https://zenodo.org/"
+# Setup the target Zenodo communities in the correct format
+ZENODO_COMMUNITIES = []
+for comm in conf.get('ZENODO', community_identifiers).split():
+    ZENODO_COMMUNITIES.append({"identifier":comm})
+
 # Create output file to log progress of records
 with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
     log = csv.writer(csvfile, dialect='excel')
     # Write header
-    log.writerow(['submission_id', 'submission_title', 'doi', 'status'])    
+    log.writerow(['submission_id', 'submission_title', 'zenodo_id', 'doi', 'status'])    
     # Process submissions
     for submission in oa_submissions:
-        sub_doi = ''
+        zenodo_id = ''
+        zenodo_doi = ''
         sub_id = submission["id"]
         sub_title = submission["title"][0]["without_html"]
         sub_abstract = "" # Zenodo permits HTML
         sub_approve_upload = False
         sub_authors = []
+        sub_type = submission["accepted_for"]["value"] # todo Need to convert this to "poster",#presentation, lesson (workshop), other (birds of feather?)"
         # Locate responses (abstract, upload_approval)
         for response in submission["responses"]:
-          if response["question"]["question_name"] == "Abstract":
-              sub_abstract = response["value"]
-              continue
+            # abstract
+            if response["question"]["question_name"] == "Abstract":
+                sub_abstract = response["value"]
+                continue
         # Extract author detail
         for author in submission["authors"]:
             a = Author()
@@ -122,27 +131,60 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                 a.orcid = author["orcid_id"]
             sub_authors.append(a)
         try:
-          # Create Zenodo draft record
-          #sub_doi = 
+            # Create Zenodo draft record
+            
+            # https://developers.zenodo.org/#representation
+            data = {  
+              "metadata":{
+                "upload_type": "poster",#presentation, lesson (workshop), other (birds of feather?)
+                "title": "test",
+                "creators":[{"name": "Smith, John", "affiliation": "University of Somewhere", "orcid": "0000-0000-0000-0000"}],
+                "description": "Lorem ipsum...",
+                "access_right":"open",
+                "license":"cc-by",
+                "keywords": conf.get('ZENODO', 'keywords').split(),
+                "communities":ZENODO_COMMUNITIES,
+                #"grants":[{"id":"10.13039/501100000780::283595"}],# I don't think we are currently collecting this info
+                "conference_title": conf.get('ZENODO', 'conference_title'),
+                "conference_acronym": conf.get('ZENODO', 'conference_acronym'),
+                "conference_dates": conf.get('ZENODO', 'conference_dates'),
+                "conference_place": conf.get('ZENODO', 'conference_place'),
+                "conference_url": conf.get('ZENODO', 'conference_url'),
+                #"conference_session": "", # All sessions (besides poster) match the talk name
+                #"conference_session_part": "", # No session has multiple parts
+                "version": "1.0.0",
+                "language": "eng"
+              }
+            }
+            r = requests.post(ZENODO_API+"api/deposit/depositions",
+                params={'access_token': conf.get('ZENODO', 'api_key')},
+                json=data)
+            # Check/Response
+            response = r.json()
+            if r.status_code != 201:
+              log.writerow([sub_id, sub_title, zenodo_id, sub_doi, f"Zenodo draft creation returned error: {response["message"]}"])
+              continue
+            zenodo_id = response["id"]
+            zenodo_doi = response["metadata"]["prereserve_doi"]["doi"]
         except Exception as e:
             # Update log
-            log.writerow([sub_id, sub_title, sub_doi, f"Zenodo draft creation failed: {e.message()}"])
+            log.writerow([sub_id, sub_title, zenodo_id, sub_doi, f"Zenodo draft creation failed: {e.message()}"])
             continue
-          # User input to locate files
+        # User input to locate files
           
         try:
-          # Upload and attach files to Zenodo record
+            # Upload and attach files to Zenodo record
         except Exception as e:
             # Update log
-            log.writerow([sub_id, sub_title, sub_doi, f"Uploading files to Zenodo failed: {e.message()}"])
+            log.writerow([sub_id, sub_title, zenodo_id, sub_doi, f"Uploading files to Zenodo failed: {e.message()}"])
             continue
           
         try:
-          # Publish
+            # Publish
         except Exception as e:
             # Update log
-            log.writerow([sub_id, sub_title, sub_doi, f"Publishing complete Zenodo draft failed: {e.message()}"])
+            log.writerow([sub_id, sub_title, zenodo_id, sub_doi, f"Publishing complete Zenodo draft failed: {e.message()}"])
             continue
         # Update log
-        #log.writerow([sub_id, sub_title, sub_doi, "Zenodo record published" if ?? else "Zenodo draft created"])
+        #log.writerow([sub_id, sub_title, zenodo_id, sub_doi, "Zenodo record published" if ?? else "Zenodo draft created"])
     
