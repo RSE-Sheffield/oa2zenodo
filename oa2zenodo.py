@@ -205,6 +205,15 @@ ZENODO_KEYWORDS = conf.get('ZENODO', 'keywords').split()
 
 skipped_sessions = set()
 
+# Locate fake file if requested
+fake_file = None
+if conf.getboolean('ZENODO', 'fake_upload') and conf.getboolean('ZENODO', 'use_sandbox'):
+    while not fake_file:
+        fake_file = open(input("Specify location of fake file to use for Sandbox uploads: "), 'rb')
+elif conf.getboolean('ZENODO', 'fake_upload'):
+    print("Error: fake_upload=TRUE is not compatible with use_sanbox=TRUE.")
+    sys.exit()
+
 # Create output file to log progress of records
 with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
     log = csv.writer(logfile, dialect='excel')
@@ -308,7 +317,7 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                 json=data)
             # Check/Response
             response = r.json()
-            if r.status_code != 201:
+            if r.status_code // 100 != 2:
               log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Zenodo draft creation returned error: {response['message']}"])
               continue
             zenodo_id = response["id"]
@@ -318,11 +327,24 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Zenodo draft creation failed: {e.message()}"])
             continue
         
-        # User input to locate files
+        # Locate files for upload
+        # @todo User input to locate files
+        pass
+
           
         # Upload and attach files to Zenodo record
         try:
-              pass
+            if fake_file:
+                r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/files",
+                    params={'access_token': conf.get('ZENODO', 'api_key')},
+                    data={"name": "fake.png"},
+                    files={'file': fake_file})
+                response = r.json()
+                if r.status_code // 100 != 2:
+                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"File upload to Zenodo returned error: {response['message']}"])
+            else:
+                pass # @todo
+                              
         except Exception as e:
             # Update log
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading files to Zenodo failed: {e.message()}"])
@@ -334,7 +356,7 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                 r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/actions/publish",
                     params={'access_token': conf.get('ZENODO', 'api_key')})
                 response = r.json()
-                if r.status_code != 201:
+                if r.status_code // 100 != 2:
                     log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Publication of Zenodo draft returned error: {response['message']}"])
                     continue
             except Exception as e:
