@@ -1,3 +1,5 @@
+import glob
+import random
 import requests, sys, configparser, csv, os
 from collections import defaultdict
 
@@ -66,6 +68,7 @@ query FetchSubmissions($event_id: Int!) {
         }
       }
       id
+      serial_number
     }
   }
 }
@@ -206,12 +209,15 @@ ZENODO_KEYWORDS = conf.get('ZENODO', 'keywords').split()
 skipped_sessions = set()
 
 # Locate fake file if requested
-fake_file = None
+fake_file_path = ""
 if conf.getboolean('ZENODO', 'fake_upload') and conf.getboolean('ZENODO', 'use_sandbox'):
+    fake_file = None
     while not fake_file:
-        fake_file = open(input("Specify location of fake file to use for Sandbox uploads: "), 'rb')
+        fake_file_path = input("Specify location of fake file to use for Sandbox uploads: ")
+        fake_file = open(fake_file_path, 'rb')
+    del fake_file
 elif conf.getboolean('ZENODO', 'fake_upload'):
-    print("Error: fake_upload=TRUE is not compatible with use_sanbox=TRUE.")
+    print("Error: fake_upload=TRUE is not compatible with use_sandbox=FALSE.")
     sys.exit()
 
 # Create output file to log progress of records
@@ -223,7 +229,8 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
     for submission in oa_submissions:
         zenodo_id = ''
         zenodo_doi = ''
-        sub_id = submission["id"]
+        sub_global_id = submission["id"] # This is a globally unique ID
+        sub_id = submission["serial_number"] # This is ID from within OA website
         sub_title = submission["title"][0]["without_html"]
         sub_abstract = "" # Zenodo permits HTML
         sub_approve_upload = False
@@ -232,30 +239,30 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         sub_has_permission = False
         sub_conference_session = None
         # Locate session info
-        if sub_id in oa_programme_submissions:
-            if len(oa_programme_submissions[sub_id])==1:
-                sub_conference_session = oa_programme_submissions[sub_id][0].session_name
+        if sub_global_id in oa_programme_submissions:
+            if len(oa_programme_submissions[sub_global_id])==1:
+                sub_conference_session = oa_programme_submissions[sub_global_id][0].session_name
             else:
                 # Submission is attached to multiple sessions, use input to offer user to select which is preferred
                 # @todo, allow selection of multiple/all
                 # Build menu
                 menu_txt = f"The submission '{sub_title}' is attached to multiple sessions, please select which to use:\n"
-                for i in range(len(oa_programme_submissions[sub_id])):
-                    menu_txt += f"{i+1}: '{oa_programme_submissions[sub_id][i].session_name}'\n"
+                for i in range(len(oa_programme_submissions[sub_global_id])):
+                    menu_txt += f"{i+1}: '{oa_programme_submissions[sub_global_id][i].session_name}'\n"
                 menu_txt += f"{0}: Skip this submission\n"
                 response = None
                 while not response:
                   try:
                       response = int(input(menu_txt))
                   except ValueError:
-                      print(f"An response in the inclusive range [0-{len(oa_programme_submissions[sub_id])}] required.")
+                      print(f"An response in the inclusive range [0-{len(oa_programme_submissions[sub_global_id])}] required.")
                 if response == 0:
                     log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Found in multiple sessions and skipped by user."])
                     continue
-                sub_conference_session = oa_programme_submissions[sub_id][response-1].session_name
-                for i in range(len(oa_programme_submissions[sub_id])):
+                sub_conference_session = oa_programme_submissions[sub_global_id][response-1].session_name
+                for i in range(len(oa_programme_submissions[sub_global_id])):
                     if i != response-1:
-                        skipped_sessions.add(oa_programme_submissions[sub_id][i])
+                        skipped_sessions.add(oa_programme_submissions[sub_global_id][i])
                  
             
         # Locate responses (abstract, upload_approval)
@@ -286,83 +293,114 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             if author["orcid_id"]:
                 a["orcid"] = author["orcid_id"]
             sub_authors.append(a)
-        # Create Zenodo draft record  
-        try:
-            # https://developers.zenodo.org/#representation
-            data = {  
-              "metadata":{
-                "upload_type": sub_type,
-                "title": sub_title,
-                "creators": sub_authors,
-                "description": sub_abstract,
-                "access_right": "open",
-                "license": "cc-by",
-                "keywords": ZENODO_KEYWORDS,
-                "communities": ZENODO_COMMUNITIES,
-                "conference_title": conf.get('ZENODO', 'conference_title'),
-                "conference_acronym": conf.get('ZENODO', 'conference_acronym'),
-                "conference_dates": conf.get('ZENODO', 'conference_dates'),
-                "conference_place": conf.get('ZENODO', 'conference_place'),
-                "conference_url": conf.get('ZENODO', 'conference_url'),
-                "conference_session": sub_conference_session,
-                #"conference_session_part": "", # @todo In future, 2024 no (standard) session has multiple parts
-                #"grants": [{"id":"10.13039/501100000780::283595"}],# I don't think we are currently collecting this info
-                "version": "1.0.0",
-                "language": "eng",
-                #"notes": ""# In future can add youtube link to notes
-              }
-            }
-            r = requests.post(ZENODO_API+"api/deposit/depositions",
-                params={'access_token': conf.get('ZENODO', 'api_key')},
-                json=data)
-            # Check/Response
-            response = r.json()
-            if r.status_code // 100 != 2:
-              log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Zenodo draft creation returned error: {response['message']}"])
-              continue
-            zenodo_id = response["id"]
-            zenodo_doi = response["metadata"]["prereserve_doi"]["doi"]
-        except Exception as e:
-            # Update log
-            log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Zenodo draft creation failed: {e.message()}"])
-            continue
-        
-        # Locate files for upload
-        # @todo User input to locate files
-        pass
-
-          
-        # Upload and attach files to Zenodo record
-        try:
-            if fake_file:
-                r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/files",
+        # Create Zenodo draft record        
+        if not conf.getboolean('ZENODO', 'dry_run'):
+            try:
+                # https://developers.zenodo.org/#representation
+                data = {  
+                  "metadata":{
+                    "upload_type": sub_type,
+                    "title": sub_title,
+                    "creators": sub_authors,
+                    "description": sub_abstract,
+                    "access_right": "open",
+                    "license": "cc-by",
+                    "keywords": ZENODO_KEYWORDS,
+                    "communities": ZENODO_COMMUNITIES,
+                    "conference_title": conf.get('ZENODO', 'conference_title'),
+                    "conference_acronym": conf.get('ZENODO', 'conference_acronym'),
+                    "conference_dates": conf.get('ZENODO', 'conference_dates'),
+                    "conference_place": conf.get('ZENODO', 'conference_place'),
+                    "conference_url": conf.get('ZENODO', 'conference_url'),
+                    "conference_session": sub_conference_session,
+                    #"conference_session_part": "", # @todo In future, 2024 no (standard) session has multiple parts
+                    #"grants": [{"id":"10.13039/501100000780::283595"}],# I don't think we are currently collecting this info
+                    "version": "1.0.0",
+                    "language": "eng",
+                    #"notes": ""# In future can add youtube link to notes
+                  }
+                }
+                r = requests.post(ZENODO_API+"api/deposit/depositions",
                     params={'access_token': conf.get('ZENODO', 'api_key')},
-                    data={"name": "fake.png"},
-                    files={'file': fake_file})
+                    json=data)
+                # Check/Response
                 response = r.json()
                 if r.status_code // 100 != 2:
-                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"File upload to Zenodo returned error: {response['message']}"])
-            else:
-                pass # @todo
-                              
-        except Exception as e:
-            # Update log
-            log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading files to Zenodo failed: {e.message()}"])
-            continue
+                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Zenodo draft creation returned error: {response['message']}"])
+                    continue
+                zenodo_id = response["id"]
+                zenodo_doi = response["metadata"]["prereserve_doi"]["doi"]
+            except Exception as e:
+                # Update log
+                log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Zenodo draft creation failed: {e.message()}"])
+                continue
+        else:
+            # Fake dry run data
+            zenodo_id = random.randint(1, 100000000)
+            zenodo_doi = random.randint(1, 100000000)
+            print(f"[DRY] Created Zenodo record for submission #{sub_id}")  
+        
+        # Create a list for this submissions files
+        sub_files = []
+        if conf.getboolean('ZENODO', 'fake_upload'):
+            sub_files.append(fake_file_path)
+        else:
+          # @todo User input to confirm files
+          # Locate the folder corresponding to the file's ID                
+          sub_folder = glob.glob(glob.escape(conf.get('ZENODO', 'file_search_root')) + f"/**/ID{sub_id}/", recursive=True)
+          if len(sub_folder) != 1:
+              log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Glob unexpectedly found {len(sub_folder)} matching directories."])
+          sub_folder = sub_folder[0]
+          # Check whether there is a "zenodo" directory (case-insensitive)
+          for f in os.listdir(sub_folder):
+              t_sub_folder = os.join(sub_folder, f)
+              if os.isdir(t_sub_folder) and f.lower() =="zenodo":
+                  sub_folder = t_sub_folder
+                  break
+          # Locate all files to be uploaded
+          sub_files = []
+          for root, _, files in os.walk(sub_folder):
+              for file in files:
+                  sub_files.append(os.path.join(root, file))
+          
+        # Upload and attach files to Zenodo record
+        for sf in sub_files:
+            # @todo Filter out certain files (e.g. transcripts, google slides)
+            try:
+                sf_name = os.path.basename(sf)
+                sf_file = open(sf, 'rb')                
+                if not conf.getboolean('ZENODO', 'dry_run'):
+                    r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/files",
+                        params={'access_token': conf.get('ZENODO', 'api_key')},
+                        data={"name": sf_name},
+                        files={'file': sf_file})
+                    response = r.json()
+                    if r.status_code // 100 != 2:
+                        log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"File upload '{sf_name}' to Zenodo returned error: {response['message']}"])
+                        continue
+                else:
+                    print(f"[DRY] Uploaded '{sf}' for submission #{sub_id}")                    
+            except Exception as e:
+                # Update log
+                log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading file '{sf_name}' to Zenodo failed: {e.message()}"])
+                continue
             
         # Publish the draft record
         if not conf.getboolean('ZENODO', 'draft_only'):
-            try:
-                r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/actions/publish",
-                    params={'access_token': conf.get('ZENODO', 'api_key')})
-                response = r.json()
-                if r.status_code // 100 != 2:
-                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Publication of Zenodo draft returned error: {response['message']}"])
+            if not conf.getboolean('ZENODO', 'dry_run'):
+                try:
+                    r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/actions/publish",
+                        params={'access_token': conf.get('ZENODO', 'api_key')})
+                    response = r.json()
+                    if r.status_code // 100 != 2:
+                        log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Publication of Zenodo draft returned error: {response['message']}"])
+                        continue
+                except Exception as e:
+                    # Update log
+                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Publication of Zenodo draft failed: {e.message()}"])
                     continue
-            except Exception as e:
-                # Update log
-                log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Publication of Zenodo draft failed: {e.message()}"])
-                continue
+            else:
+                print(f"[DRY] Published submission #{sub_id}")
         # Update log
         if conf.getboolean('ZENODO', 'draft_only'):
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, "Zenodo draft record created"])
