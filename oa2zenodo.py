@@ -40,7 +40,9 @@ FETCH_SUBMISSIONS_QUERY = {
 query FetchSubmissions($event_id: Int!) {
   events_by_pk(id: $event_id) {
     id
-    submissions(where: {decision: {value: {_eq: "Accepted"}}}) {
+    submissions(
+      where: {decision: {value: {_eq: "Accepted"}}, archived: {_eq: false}}
+    ) {
       decision {
         value
       }
@@ -345,18 +347,27 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         if conf.getboolean('ZENODO', 'fake_upload'):
             sub_files.append(fake_file_path)
         else:
+          print(f"{sub_id} - {sub_title}")
           # @todo User input to confirm files
-          # Locate the folder corresponding to the file's ID                
-          sub_folder = glob.glob(glob.escape(conf.get('ZENODO', 'file_search_root')) + f"/**/ID{sub_id}/", recursive=True)
+          # Locate the folder corresponding to the file's ID
+          sub_folder = glob.glob(glob.escape(conf.get('ZENODO', 'file_search_root')) + f"/**/ID{sub_id}*/", recursive=True)
+          if len(sub_folder) == 0:
+              # Glob rules make no sense, command breaks if i just add "{ ,}"
+              sub_folder = glob.glob(glob.escape(conf.get('ZENODO', 'file_search_root')) + f"/**/ID {sub_id}*/", recursive=True)
+          if len(sub_folder) == 0:
+              # The cloudkubed sponsor workshop (#174) doesn't have a google drive directory
+                log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Google drive directory missing"])
+                continue
           if len(sub_folder) != 1:
               log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Glob unexpectedly found {len(sub_folder)} matching directories."])
           sub_folder = sub_folder[0]
           # Check whether there is a "zenodo" directory (case-insensitive)
           for f in os.listdir(sub_folder):
-              t_sub_folder = os.join(sub_folder, f)
-              if os.isdir(t_sub_folder) and f.lower() =="zenodo":
+              t_sub_folder = os.path.join(sub_folder, f)
+              if os.path.isdir(t_sub_folder) and f.lower() =="zenodo":
                   sub_folder = t_sub_folder
                   break
+          print(sub_folder)
           # Locate all files to be uploaded
           sub_files = []
           for root, _, files in os.walk(sub_folder):
@@ -365,11 +376,11 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
           
         # Upload and attach files to Zenodo record
         for sf in sub_files:
-            # @todo Filter out certain files (e.g. transcripts, google slides)
-            try:
-                sf_name = os.path.basename(sf)
-                sf_file = open(sf, 'rb')                
-                if not conf.getboolean('ZENODO', 'dry_run'):
+            # @todo Filter out certain files (e.g. transcripts, google slides, desktop.ini)                
+            if not conf.getboolean('ZENODO', 'dry_run'):
+                try:
+                    sf_name = os.path.basename(sf)
+                    sf_file = open(sf, 'rb')
                     r = requests.post(ZENODO_API+f"api/deposit/depositions/{zenodo_id}/files",
                         params={'access_token': conf.get('ZENODO', 'api_key')},
                         data={"name": sf_name},
@@ -377,13 +388,13 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                     response = r.json()
                     if r.status_code // 100 != 2:
                         log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"File upload '{sf_name}' to Zenodo returned error: {response['message']}"])
-                        continue
-                else:
-                    print(f"[DRY] Uploaded '{sf}' for submission #{sub_id}")                    
-            except Exception as e:
-                # Update log
-                log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading file '{sf_name}' to Zenodo failed: {e.message()}"])
-                continue
+                        continue                 
+                except Exception as e:
+                    # Update log
+                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading file '{sf_name}' to Zenodo failed: {e.message()}"])
+                    continue
+            else:
+                print(f"[DRY] Uploaded '{sf}' for submission #{sub_id}")
             
         # Publish the draft record
         if not conf.getboolean('ZENODO', 'draft_only'):
