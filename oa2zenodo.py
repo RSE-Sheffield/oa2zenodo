@@ -1,6 +1,4 @@
-import glob
-import random
-import requests, sys, configparser, csv, os
+import requests, sys, configparser, csv, os, random, re
 from collections import defaultdict
 
 # Load config file
@@ -227,6 +225,16 @@ SKIPPED_SUBMISSIONS = set()
 if 'skipped_submissions' in conf['ZENODO']:
     SKIPPED_SUBMISSIONS = set([int(i) for i in conf['ZENODO']['skipped_submissions'].split()])
 
+# Build a map of id:upload-folder-path (because GLOB sucks)
+UPLOAD_DIRS = {}
+for root, dirs, files in os.walk(conf.get('ZENODO', 'file_search_root')):
+    for dir in dirs:
+        m = re.search("^ID ?([0-9]+)",dir)
+        if m:
+            if int(m.group(1)) in UPLOAD_DIRS:
+                raise Exception(f"2 dirs for submission {m.group(1)}\n{UPLOAD_DIRS[int(m.group(1))]}\n{os.path.join(root, dir)}")
+            UPLOAD_DIRS[int(m.group(1))] = os.path.join(root, dir)
+
 # Create output file to log progress of records
 with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
     log = csv.writer(logfile, dialect='excel')
@@ -358,24 +366,17 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
           print(f"{sub_id} - {sub_title}")
           # @todo User input to confirm files
           # Locate the folder corresponding to the file's ID
-          sub_folder = glob.glob(glob.escape(conf.get('ZENODO', 'file_search_root')) + f"/**/ID{sub_id}*/", recursive=True)
-          if len(sub_folder) == 0:
-              # Glob rules make no sense, command breaks if i just add "{ ,}"
-              sub_folder = glob.glob(glob.escape(conf.get('ZENODO', 'file_search_root')) + f"/**/ID {sub_id}*/", recursive=True)
-          if len(sub_folder) == 0:
+          if not sub_id in UPLOAD_DIRS:
               # The cloudkubed sponsor workshop (#174) doesn't have a google drive directory
                 log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Google drive directory missing"])
                 continue
-          if len(sub_folder) != 1:
-              log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Glob unexpectedly found {len(sub_folder)} matching directories."])
-          sub_folder = sub_folder[0]
+          sub_folder = UPLOAD_DIRS[sub_id]
           # Check whether there is a "zenodo" directory (case-insensitive)
           for f in os.listdir(sub_folder):
               t_sub_folder = os.path.join(sub_folder, f)
-              if os.path.isdir(t_sub_folder) and f.lower() =="zenodo":
+              if os.path.isdir(t_sub_folder) and f.lower() == "zenodo":
                   sub_folder = t_sub_folder
                   break
-          print(sub_folder)
           # Locate all files to be uploaded
           sub_files = []
           for root, _, files in os.walk(sub_folder):
