@@ -1,5 +1,6 @@
 import requests, sys, configparser, csv, os, random, re
 from collections import defaultdict
+from fnmatch import fnmatch
 
 # Load config file
 if len(sys.argv) > 2:
@@ -256,6 +257,8 @@ if "youtube_csv" in conf['ZENODO']:
                         # N:1 matches (Poster lighting talks)
                         YOUTUBE_URLS[int(j)] = row[val]
 
+FILE_BLACKLIST = conf['ZENODO']['file_blacklist'].split() if 'file_blacklist' in conf['ZENODO'] else []
+
 # Create output file to log progress of records
 with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
     log = csv.writer(logfile, dialect='excel')
@@ -388,7 +391,6 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         if conf.getboolean('ZENODO', 'fake_upload'):
             sub_files.append(fake_file_path)
         else:
-          print(f"{sub_id} - {sub_title}")
           # @todo User input to confirm files
           # Locate the folder corresponding to the file's ID
           if not sub_id in UPLOAD_DIRS:
@@ -406,6 +408,9 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
           sub_files = []
           for root, _, files in os.walk(sub_folder):
               for file in files:
+                  for test_filename in FILE_BLACKLIST:
+                      if fnmatch(test_filename.lower(), file.lower()):
+                          continue
                   sub_files.append(os.path.join(root, file))
           
         # Upload and attach files to Zenodo record
