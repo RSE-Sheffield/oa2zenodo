@@ -227,13 +227,34 @@ if 'skipped_submissions' in conf['ZENODO']:
 
 # Build a map of id:upload-folder-path (because GLOB sucks)
 UPLOAD_DIRS = {}
-for root, dirs, files in os.walk(conf.get('ZENODO', 'file_search_root')):
+for root, dirs, files in os.walk(conf['ZENODO']['file_search_root']):
     for dir in dirs:
         m = re.search("^ID ?([0-9]+)",dir)
         if m:
             if int(m.group(1)) in UPLOAD_DIRS:
                 raise Exception(f"2 dirs for submission {m.group(1)}\n{UPLOAD_DIRS[int(m.group(1))]}\n{os.path.join(root, dir)}")
             UPLOAD_DIRS[int(m.group(1))] = os.path.join(root, dir)
+
+# Build a map of id:youtube-url
+YOUTUBE_URLS = {}
+if "youtube_csv" in conf['ZENODO']:
+    if not ("youtube_csv_id" in conf['ZENODO'] and "youtube_csv_url" in  conf['ZENODO']):
+        raise Exception("Input contains 'youtube_csv', but not both 'youtube_csv_id' and 'youtube_csv_url' which denote column headings")
+    with open(conf['ZENODO']['youtube_csv'], mode='r', newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        key = conf['ZENODO']['youtube_csv_id']
+        val = conf['ZENODO']['youtube_csv_url']
+        for row in reader:
+            # Only use rows that have data
+            if len(row[key]) and len(row[val]):
+                try:
+                    # Regular 1:1 matches
+                    YOUTUBE_URLS[int(row[key])] = row[val]
+                except ValueError:
+                    i = row[key].split(",")
+                    for j in i:
+                        # N:1 matches (Poster lighting talks)
+                        YOUTUBE_URLS[int(j)] = row[val]
 
 # Create output file to log progress of records
 with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
@@ -296,6 +317,10 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Permission to publish denied."])
             continue
                     
+        # Append YouTube URL if available
+        if sub_id in YOUTUBE_URLS:
+            sub_abstract += f"\nA recording of this session is available on YouTube: {YOUTUBE_URLS[sub_id]}"
+
         # Extract author detail
         for author in submission["authors"]:
             a = dict()
