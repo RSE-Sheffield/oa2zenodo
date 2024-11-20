@@ -222,6 +222,11 @@ elif conf.getboolean('ZENODO', 'fake_upload'):
     print("Error: fake_upload=TRUE is not compatible with use_sandbox=FALSE.")
     sys.exit()
 
+# Process skipped submissions into a set of integers
+SKIPPED_SUBMISSIONS = set()
+if 'skipped_submissions' in conf['ZENODO']:
+    SKIPPED_SUBMISSIONS = set([int(i) for i in conf['ZENODO']['skipped_submissions'].split()])
+
 # Create output file to log progress of records
 with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
     log = csv.writer(logfile, dialect='excel')
@@ -240,6 +245,9 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         sub_type = accepted_for_to_upload_type(submission["accepted_for"]["value"])
         sub_has_permission = False
         sub_conference_session = None
+        if sub_id in SKIPPED_SUBMISSIONS:
+            log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Skipped as requested by config"])
+            continue
         # Locate session info
         if sub_global_id in oa_programme_submissions:
             if len(oa_programme_submissions[sub_global_id])==1:
