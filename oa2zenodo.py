@@ -418,11 +418,13 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
           sub_files = []
           for root, _, files in os.walk(sub_folder):
               for file in files:
+                  skip = False
                   for test_filename in FILE_BLACKLIST:
-                      if fnmatch(test_filename.lower(), file.lower()):
-                          continue
-                  sub_files.append(os.path.join(root, file))
-          
+                      if fnmatch(file.lower(), test_filename.lower()):
+                          skip = True
+                          break
+                  if not skip:
+                    sub_files.append(os.path.join(root, file))
         # Upload and attach files to Zenodo record
         for sf in sub_files:
             # @todo Filter out certain files (e.g. transcripts, google slides, desktop.ini)                
@@ -437,7 +439,10 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                     response = r.json()
                     if r.status_code // 100 != 2:
                         log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"File upload '{sf_name}' to Zenodo returned error: {response['message']}"])
-                        continue                 
+                        continue
+                except OSError as e:
+                    # Update log
+                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Failed to open file '{sf}': {e.strerror}"])
                 except Exception as e:
                     # Update log
                     log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading file '{sf_name}' to Zenodo failed: {e.message()}"])
