@@ -282,29 +282,39 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             continue
         # Locate session info
         if sub_global_id in oa_programme_submissions:
-            if len(oa_programme_submissions[sub_global_id])==1:
-                sub_conference_session = oa_programme_submissions[sub_global_id][0].session_name
+            # Filter out duplicate and previously skipped session names
+            matching_sessions = []
+            for x in oa_programme_submissions[sub_global_id]:
+                if (x.session_name not in matching_sessions
+                and x.session_name not in skipped_sessions):
+                    matching_sessions.append(x.session_name)
+            # Perform selection
+            if len(matching_sessions)==0:
+                log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Found only in previously skipped sessions, so ignored."])
+                continue
+            elif len(matching_sessions)==1:
+                sub_conference_session = matching_sessions[0]
             else:
                 # Submission is attached to multiple sessions, use input to offer user to select which is preferred
-                # @todo, allow selection of multiple/all
+                # @todo, allow selection of multiple/all?
                 # Build menu
                 menu_txt = f"The submission '{sub_title}' is attached to multiple sessions, please select which to use:\n"
-                for i in range(len(oa_programme_submissions[sub_global_id])):
-                    menu_txt += f"{i+1}: '{oa_programme_submissions[sub_global_id][i].session_name}'\n"
+                for i in range(len(matching_sessions)):
+                    menu_txt += f"{i+1}: '{matching_sessions[i]}'\n"
                 menu_txt += f"{0}: Skip this submission\n"
                 response = None
                 while not response:
                   try:
                       response = int(input(menu_txt))
                   except ValueError:
-                      print(f"An response in the inclusive range [0-{len(oa_programme_submissions[sub_global_id])}] required.")
+                      print(f"An response in the inclusive range [0-{len(matching_sessions)}] required.")
                 if response == 0:
                     log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Found in multiple sessions and skipped by user."])
                     continue
-                sub_conference_session = oa_programme_submissions[sub_global_id][response-1].session_name
-                for i in range(len(oa_programme_submissions[sub_global_id])):
+                sub_conference_session = matching_sessions[response-1]
+                for i in range(len(matching_sessions)):
                     if i != response-1:
-                        skipped_sessions.add(oa_programme_submissions[sub_global_id][i])
+                        skipped_sessions.add(matching_sessions[i])
                  
             
         # Locate responses (abstract, upload_approval)
