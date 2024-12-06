@@ -329,10 +329,10 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         if not sub_has_permission:
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Permission to publish denied."])
             continue
-                    
+
         # Append YouTube URL if available
         if sub_id in YOUTUBE_URLS:
-            sub_abstract += f"\nA recording of this session is available on YouTube: {YOUTUBE_URLS[sub_id]}"
+            sub_abstract += f"\nA recording of this session is available on YouTube: <a href=\"{YOUTUBE_URLS[sub_id]}\">{YOUTUBE_URLS[sub_id]}</a>"
 
         # Extract author detail
         for author in submission["authors"]:
