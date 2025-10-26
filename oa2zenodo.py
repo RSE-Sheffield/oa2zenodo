@@ -8,7 +8,7 @@ if len(sys.argv) > 2:
     print("rsecon24.ini will be attempted if an argument is not provided.")
     sys.exit()
     
-conf_path = "rsecon24.ini" if len(sys.argv)==1 else sys.argv[1]
+conf_path = "rsecon25.ini" if len(sys.argv)==1 else sys.argv[1]
 conf = configparser.ConfigParser()
 if os.path.exists(conf_path): 
     with open(conf_path, "r") as conf_file: 
@@ -230,7 +230,7 @@ if 'skipped_submissions' in conf['ZENODO']:
 UPLOAD_DIRS = {}
 for root, dirs, files in os.walk(conf['ZENODO']['file_search_root']):
     for dir in dirs:
-        m = re.search("^ID ?([0-9]+)",dir)
+        m = re.search("ID ?([0-9]+)",dir)
         if m:
             if int(m.group(1)) in UPLOAD_DIRS:
                 raise Exception(f"2 dirs for submission {m.group(1)}\n{UPLOAD_DIRS[int(m.group(1))]}\n{os.path.join(root, dir)}")
@@ -271,10 +271,15 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         sub_global_id = submission["id"] # This is a globally unique ID
         sub_id = submission["serial_number"] # This is ID from within OA website
         sub_title = submission["title"][0]["without_html"]
+        if not submission["accepted_for"]:
+          # Submission was not accepted, possibly a keynote which we probably don't have slides for
+          log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Acceptance reason not present, assumed keynote/similar."])
+          continue
         sub_abstract = "" # Zenodo permits HTML
         sub_approve_upload = False
         sub_authors = []
         sub_type = accepted_for_to_upload_type(submission["accepted_for"]["value"])
+        sub_acknowledgement = "" # OA output is HTML
         sub_has_permission = False
         sub_conference_session = None
         if sub_id in SKIPPED_SUBMISSIONS:
@@ -295,26 +300,40 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             elif len(matching_sessions)==1:
                 sub_conference_session = matching_sessions[0]
             else:
-                # Submission is attached to multiple sessions, use input to offer user to select which is preferred
-                # @todo, allow selection of multiple/all?
-                # Build menu
-                menu_txt = f"The submission '{sub_title}' is attached to multiple sessions, please select which to use:\n"
-                for i in range(len(matching_sessions)):
-                    menu_txt += f"{i+1}: '{matching_sessions[i]}'\n"
-                menu_txt += f"{0}: Skip this submission\n"
-                response = None
-                while not response:
-                  try:
-                      response = int(input(menu_txt))
-                  except ValueError:
-                      print(f"An response in the inclusive range [0-{len(matching_sessions)}] required.")
-                if response == 0:
-                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Found in multiple sessions and skipped by user."])
-                    continue
-                sub_conference_session = matching_sessions[response-1]
-                for i in range(len(matching_sessions)):
-                    if i != response-1:
-                        skipped_sessions.add(matching_sessions[i])
+                # If matching sessions are named "foo I", "foo II", name the session "foo"
+                t_matching_sessions = matching_sessions
+                for i in range(len(t_matching_sessions)):
+                  if t_matching_sessions[i].endswith(" I"):
+                    t_matching_sessions[i] = t_matching_sessions[i][0:-2]
+                  elif t_matching_sessions[i].endswith(" II"):
+                    t_matching_sessions[i] = t_matching_sessions[i][0:-3]
+                  elif t_matching_sessions[i].endswith(" [Part 1/2]"):
+                    t_matching_sessions[i] = t_matching_sessions[i][0:-11]
+                  elif t_matching_sessions[i].endswith(" [Part 2/2]"):
+                    t_matching_sessions[i] = t_matching_sessions[i][0:-11]
+                if all(ms == t_matching_sessions[0] for ms in t_matching_sessions):
+                  sub_conference_session = t_matching_sessions[0]
+                else:
+                  # Submission is attached to multiple sessions, use input to offer user to select which is preferred
+                  # @todo, allow selection of multiple/all?
+                  # Build menu
+                  menu_txt = f"The submission '{sub_title}' is attached to multiple sessions, please select which to use:\n"
+                  for i in range(len(matching_sessions)):
+                      menu_txt += f"{i+1}: '{matching_sessions[i]}'\n"
+                  menu_txt += f"{0}: Skip this submission\n"
+                  response = None
+                  while not response:
+                    try:
+                        response = int(input(menu_txt))
+                    except ValueError:
+                        print(f"An response in the inclusive range [0-{len(matching_sessions)}] required.")
+                  if response == 0:
+                      log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Found in multiple sessions and skipped by user."])
+                      continue
+                  sub_conference_session = matching_sessions[response-1]
+                  for i in range(len(matching_sessions)):
+                      if i != response-1:
+                          skipped_sessions.add(matching_sessions[i])
                  
             
         # Locate responses (abstract, upload_approval)
@@ -326,13 +345,16 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             elif response["question"]["question_name"] == "Permission to Publish":
                 if response["value"] == "yes":
                     sub_has_permission = True
+            # permission to publish
+            elif response["question"]["question_name"] == "Acknowledgements":
+                sub_abstract += "<br/>" + response["value"]
         if not sub_has_permission:
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Permission to publish denied."])
             continue
 
         # Append YouTube URL if available
         if sub_id in YOUTUBE_URLS:
-            sub_abstract += f"\nA recording of this session is available on YouTube: <a href=\"{YOUTUBE_URLS[sub_id]}\">{YOUTUBE_URLS[sub_id]}</a>"
+            sub_abstract += f"<br/>A recording of this session is available on YouTube: <a href=\"{YOUTUBE_URLS[sub_id]}\">{YOUTUBE_URLS[sub_id]}</a>"
 
         # Extract author detail
         for author in submission["authors"]:
@@ -394,9 +416,9 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             # Fake dry run data
             zenodo_id = random.randint(1, 100000000)
             zenodo_doi = random.randint(1, 100000000)
-            print(f"[DRY] Created Zenodo record for submission #{sub_id}")  
+            print(f"[DRY] Created Zenodo record for submission #{sub_id} ({sub_title})")  
         
-        # Create a list for this submissions files
+        # Create a list for this submission's files
         sub_files = []
         if conf.getboolean('ZENODO', 'fake_upload'):
             sub_files.append(fake_file_path)
