@@ -462,8 +462,9 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                         log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"File upload '{sf_name}' to Zenodo returned error: {response['message']}"])
                         continue
                 except OSError as e:
-                    # Update log
-                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Failed to open file '{sf}': {e.strerror}"])
+                    # Update log (crashes here if filename contains emojis, ffs)
+                    t_sf = sf.replace("✅", "").replace("⚠️", "")
+                    log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Failed to open file '{t_sf}': {e.strerror}"])
                 except Exception as e:
                     # Update log
                     log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Uploading file '{sf_name}' to Zenodo failed: {e.message()}"])
