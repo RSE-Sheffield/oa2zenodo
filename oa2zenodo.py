@@ -279,7 +279,6 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         sub_approve_upload = False
         sub_authors = []
         sub_type = accepted_for_to_upload_type(submission["accepted_for"]["value"])
-        sub_acknowledgement = "" # OA output is HTML
         sub_has_permission = False
         sub_conference_session = None
         if sub_id in SKIPPED_SUBMISSIONS:
@@ -347,7 +346,7 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                     sub_has_permission = True
             # permission to publish
             elif response["question"]["question_name"] == "Acknowledgements":
-                sub_abstract += "<br/>" + response["value"]
+                sub_abstract += "<br/><strong>Acknowledgements</strong>\n" + response["value"]
         if not sub_has_permission:
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Permission to publish denied."])
             continue
