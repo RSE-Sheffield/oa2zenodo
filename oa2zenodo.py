@@ -370,7 +370,7 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
             if author["orcid_id"]:
                 a["orcid"] = author["orcid_id"]
             sub_authors.append(a)
-        # Create Zenodo draft record        
+        # Create Zenodo draft record
         if not conf.getboolean('ZENODO', 'dry_run'):
             try:
                 # https://developers.zenodo.org/#representation
@@ -446,9 +446,12 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
                           break
                   if not skip:
                     sub_files.append(os.path.join(root, file))
+        # If a record has no files, it won't validate, fail fast
+        if len(sub_files) == 0:
+            log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Google drive directory is empty"])
         # Upload and attach files to Zenodo record
         for sf in sub_files:
-            # @todo Filter out certain files (e.g. transcripts, google slides, desktop.ini)                
+            # @todo Filter out certain files (e.g. transcripts, google slides, desktop.ini)
             if not conf.getboolean('ZENODO', 'dry_run'):
                 try:
                     sf_name = os.path.basename(sf)
