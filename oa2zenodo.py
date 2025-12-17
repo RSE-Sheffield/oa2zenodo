@@ -449,6 +449,7 @@ with open('oa2zenodo_log.csv', 'w', newline='') as logfile:
         # If a record has no files, it won't validate, fail fast
         if len(sub_files) == 0:
             log.writerow([sub_id, sub_title, zenodo_id, zenodo_doi, f"Google drive directory is empty"])
+            continue
         # Upload and attach files to Zenodo record
         for sf in sub_files:
             # @todo Filter out certain files (e.g. transcripts, google slides, desktop.ini)
